@@ -1,0 +1,46 @@
+[build-system]
+requires = ["setuptools>=61.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "evilair"
+version = "1.0.0"
+description = "Discover, monitor and shape the bandwidth of devices on your LAN"
+readme = "README.md"
+requires-python = ">=3.10"
+license = { text = "MIT" }
+authors = [{ name = "evilair contributors" }]
+keywords = ["evillimiter", "evilair", "bandwidth", "network", "arp", "qos", "tc"]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Environment :: Console",
+    "Intended Audience :: System Administrators",
+    "License :: OSI Approved :: MIT License",
+    "Operating System :: POSIX :: Linux",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3 :: Only",
+    "Topic :: System :: Networking",
+    "Topic :: System :: Systems Administration",
+]
+dependencies = [
+    "colorama>=0.4",
+    "netaddr>=0.8",
+    "netifaces>=0.11",
+    "prompt_toolkit>=3.0",
+    "rich>=13.0",
+    "scapy>=2.5",
+    "tqdm>=4.60",
+]
+
+[project.scripts]
+evilair = "evilair.cli:main"
+
+[project.urls]
+Source = "https://github.com/bitbrute/evillimiter"
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["evilair*"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
