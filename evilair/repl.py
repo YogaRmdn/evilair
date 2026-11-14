@@ -147,6 +147,9 @@ class Repl:
         parser = self._add("menu", "Open the interactive command menu (arrow keys).", ("m",))
         self._set_handler("menu", self._cmd_menu)
 
+        parser = self._add("update", "Pull the latest version from GitHub and reinstall.", ("upd",))
+        self._set_handler("update", self._cmd_update)
+
         self._add("quit", "Leave evilair and restore the network.", ("exit", "q"))
 
     # -- loop -------------------------------------------------------------
@@ -496,6 +499,47 @@ class Repl:
         line = selected + (" " + args_value.strip() if args_value.strip() else "")
         self.console.print(f"[dim]› {line}[/dim]")
         self.handle(line)
+
+    def _cmd_update(self, args: argparse.Namespace) -> None:
+        """Pull the latest code from GitHub and reinstall the package."""
+        import os
+        import subprocess
+        import sys
+        from pathlib import Path
+
+        project_root = Path(__file__).resolve().parents[1]
+        if not (project_root / ".git").is_dir():
+            raise SessionError(
+                "this installation is not a git checkout; update manually with git pull"
+            )
+
+        self.console.info("fetching updates from GitHub…")
+        pull = subprocess.run(
+            ["git", "-C", str(project_root), "pull", "--ff-only"],
+            capture_output=True,
+            text=True,
+        )
+        output = (pull.stdout or "").strip()
+        if pull.returncode != 0:
+            detail = (pull.stderr or output or "unknown error").strip()
+            raise SessionError(f"git pull failed: {detail}")
+        if output:
+            self.console.ok(output.splitlines()[-1])
+        else:
+            self.console.ok("already up to date")
+
+        venv_python = "/home/whoami/Python-env/bin/python"
+        python = venv_python if os.path.exists(venv_python) else sys.executable
+        self.console.info("installing dependencies…")
+        install = subprocess.run(
+            [python, "-m", "pip", "install", "-e", str(project_root)],
+            capture_output=True,
+            text=True,
+        )
+        if install.returncode != 0:
+            detail = (install.stderr or install.stdout or "unknown error").strip()
+            raise SessionError(f"pip install failed: {detail[-400:]}")
+        self.console.ok("update complete — restart EvilAir to use the new version")
 
     def _cmd_clear(self, args: argparse.Namespace) -> None:
         self.console.rich.clear()

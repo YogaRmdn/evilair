@@ -88,6 +88,7 @@ sudo ./run.py
 | `export <path> [--csv]` | Save host list | `export hosts.json` |
 | `flush` | Delete all EvilAir rules/qdisc | `flush` |
 | `menu` / `m` | Interactive arrow-key menu | `menu` |
+| `update` / `upd` | Pull latest version from GitHub and reinstall | `update` |
 | `help`, `clear`, `quit` | Utilities | `help` |
 
 Targets accept host ids (`0`), ranges (`1-3`), comma lists, IPs, MACs, or `all`.
