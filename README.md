@@ -25,6 +25,8 @@ EvilAir is a professional command-line tool to **discover, monitor, and shape th
 - Python 3.10+
 - System tools: `tc`, `iptables`, `sysctl`, `ip`, `ping`
 - Root privileges for live use (shaping traffic and crafting ARP packets)
+- Any 802.11 band works (2.4 GHz and 5 GHz alike) as long as the access point
+  does not isolate clients from each other
 
 ## Installation
 
@@ -117,7 +119,10 @@ evilair (14 hosts) › export hosts.json
 ~/Python-env/bin/python -m unittest discover -s tests
 ```
 
-All 36 tests should pass.
+All tests should pass.
+
+The interpreter used by `run.py` and the `update` command is auto-detected
+(project `.venv`, then `~/Python-env`). Override it with `EVILAIR_PYTHON=/path/to/python`.
 
 ## License
 

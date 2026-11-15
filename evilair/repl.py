@@ -335,10 +335,12 @@ class Repl:
             args.target, args.rate, Direction.parse(args.dir), args.download_rate
         )
         for host in hosts:
-            detail = f"up {format_bitrate(host.upload_limit or 0)}"
-            if host.download_limit:
-                detail += f" / down {format_bitrate(host.download_limit)}"
-            self.console.ok(f"{host.ip} limited to {detail}")
+            detail = []
+            if host.upload_limit is not None:
+                detail.append(f"up {format_bitrate(host.upload_limit)}")
+            if host.download_limit is not None:
+                detail.append(f"down {format_bitrate(host.download_limit)}")
+            self.console.ok(f"{host.ip} limited to {' / '.join(detail)}")
 
     def _cmd_block(self, args: argparse.Namespace) -> None:
         hosts = self.session.block(args.target, Direction.parse(args.dir))
@@ -502,7 +504,6 @@ class Repl:
 
     def _cmd_update(self, args: argparse.Namespace) -> None:
         """Pull the latest code from GitHub and reinstall the package."""
-        import os
         import subprocess
         import sys
         from pathlib import Path
@@ -528,8 +529,9 @@ class Repl:
         else:
             self.console.ok("already up to date")
 
-        venv_python = "/home/whoami/Python-env/bin/python"
-        python = venv_python if os.path.exists(venv_python) else sys.executable
+        from evilair.util.pythonenv import preferred_python
+
+        python = preferred_python() or sys.executable
         self.console.info("installing dependencies…")
         install = subprocess.run(
             [python, "-m", "pip", "install", "-e", str(project_root)],

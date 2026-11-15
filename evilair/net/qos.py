@@ -7,6 +7,7 @@ id, which makes removal deterministic - no matter how the process exited.
 from __future__ import annotations
 
 import logging
+import shlex
 from dataclasses import dataclass
 from enum import IntFlag
 
@@ -21,6 +22,47 @@ DEFAULT_CLASS = 30
 DEFAULT_CLASS_RATE = "10gbit"
 COMMENT_PREFIX = "evilair"
 IP_FORWARD = "/proc/sys/net/ipv4/ip_forward"
+
+
+def rule_tokens(line: str) -> list[str]:
+    """Split an ``iptables -S`` line, removing the quotes iptables adds."""
+    return shlex.split(line)
+
+
+def _token_matches(token: str, part: str) -> bool:
+    # ``iptables -S`` renders single hosts with a /32 suffix, so compare the
+    # address part as well as the literal token.
+    return token == part or token.split("/", 1)[0] == part
+
+
+def rule_matches(
+    line: str, match: list[str], jump: str | None, chain: str | None = None
+) -> bool:
+    """Return True when an ``iptables -S`` line is one of this tool's rules."""
+    tokens = rule_tokens(line)
+    if len(tokens) < 2 or tokens[0] != "-A":
+        return False
+    if chain is not None and tokens[1] != chain:
+        return False
+    if not any(COMMENT_PREFIX in token for token in tokens):
+        return False
+    if jump is not None and jump not in tokens:
+        return False
+    return all(any(_token_matches(token, part) for token in tokens) for part in match)
+
+
+def delete_arguments(line: str) -> list[str]:
+    """Turn an ``iptables -S`` rule into an equivalent ``-D`` argument list.
+
+    The comment value is re-tokenised with :func:`shlex.split`, otherwise the
+    quotes printed by ``iptables -S`` would be passed literally and the delete
+    request would not match the installed rule.
+    """
+    tokens = rule_tokens(line)
+    if not tokens or tokens[0] != "-A":
+        return []
+    tokens[0] = "-D"
+    return tokens
 
 
 class Direction(IntFlag):
@@ -235,32 +277,29 @@ class TrafficController:
             listing = self.runner.output(["iptables", "-t", table, "-S", chain])
             spec = [
                 line for line in listing.splitlines()
-                if line.startswith("-A " + chain)
-                and all(part in line.split() for part in match)
-                and jump in line.split()
-                and COMMENT_PREFIX in line
+                if rule_matches(line, match, jump, chain)
             ]
             if not spec:
                 return
-            parts = spec[0].split()
-            if parts and parts[0] == "-A":
-                parts[0] = "-D"
-            self.runner.run(["iptables", "-t", table, *parts])
+            argv = delete_arguments(spec[0])
+            if not argv or not self.runner.run(["iptables", "-t", table, *argv]).ok:
+                LOGGER.warning("could not delete iptables rule: %s", spec[0])
+                return
 
     def _delete_tagged_iptables_rules(self) -> None:
         for table, chain in (("mangle", "PREROUTING"), ("mangle", "POSTROUTING"), ("filter", "FORWARD")):
-            for _ in range(32):
+            for _ in range(64):
                 listing = self.runner.output(["iptables", "-t", table, "-S", chain])
                 spec = [
                     line for line in listing.splitlines()
-                    if line.startswith("-A " + chain) and COMMENT_PREFIX in line
+                    if rule_matches(line, [], None, chain)
                 ]
                 if not spec:
                     break
-                parts = spec[0].split()
-                if parts and parts[0] == "-A":
-                    parts[0] = "-D"
-                self.runner.run(["iptables", "-t", table, *parts])
+                argv = delete_arguments(spec[0])
+                if not argv or not self.runner.run(["iptables", "-t", table, *argv]).ok:
+                    LOGGER.warning("could not delete iptables rule: %s", spec[0])
+                    break
 
     def _enable_ip_forwarding(self) -> None:
         result = self.runner.run(["sysctl", "-w", "net.ipv4.ip_forward=1"])

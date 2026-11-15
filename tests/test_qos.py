@@ -1,9 +1,10 @@
+import ipaddress
 import unittest
 
 from evilair.core.host import Host
-from evilair.net.qos import Direction, TrafficController
+from evilair.net.qos import Direction, TrafficController, delete_arguments, rule_matches
 from evilair.util.rate import BitRate
-from evilair.util.shell import CommandRunner
+from evilair.util.shell import CommandRunner, Result
 
 
 def controller() -> tuple[TrafficController, CommandRunner]:
@@ -142,6 +143,132 @@ class BlockTests(unittest.TestCase):
         self.assertNotIn(host.ip, tc.active_rules())
         tc.flush()
         self.assertEqual(tc.active_rules(), {})
+
+
+class _FakeIptables:
+    """Stateful stand-in for iptables that mimics ``-A``, ``-D`` and ``-S``."""
+
+    def __init__(self) -> None:
+        self.rules: dict[tuple[str, str], list[list[str]]] = {}
+        self.commands: list[list[str]] = []
+
+    @staticmethod
+    def _is_ip(token: str) -> bool:
+        try:
+            ipaddress.IPv4Address(token)
+            return True
+        except ValueError:
+            return False
+
+    @classmethod
+    def _normalise(cls, spec: list[str]) -> list[str]:
+        return [part[:-3] if part.endswith("/32") and cls._is_ip(part[:-3]) else part for part in spec]
+
+    def run(self, command, check: bool = False) -> Result:
+        cmd = list(command)
+        self.commands.append(cmd)
+        if cmd[:2] == ["iptables", "-t"] and len(cmd) >= 5:
+            table, action, chain = cmd[2], cmd[3], cmd[4]
+            key = (table, chain)
+            if action == "-A":
+                self.rules.setdefault(key, []).append(cmd[5:])
+            elif action == "-D":
+                wanted = self._normalise(cmd[5:])
+                bucket = self.rules.get(key, [])
+                for index, spec in enumerate(bucket):
+                    if self._normalise(spec) == wanted:
+                        bucket.pop(index)
+                        break
+        return Result(command=tuple(cmd), returncode=0)
+
+    def output(self, command: list[str]) -> str:
+        table, chain = command[2], command[4]
+        lines = []
+        for spec in self.rules.get((table, chain), []):
+            rendered: list[str] = []
+            quote_next = False
+            for token in spec:
+                if quote_next:
+                    rendered.append(f'"{token}"')
+                    quote_next = False
+                    continue
+                if self._is_ip(token):
+                    token += "/32"
+                rendered.append(token)
+                quote_next = token == "--comment"
+            lines.append("-A " + chain + " " + " ".join(rendered))
+        return "\n".join(lines)
+
+
+class IptablesRuleParsingTests(unittest.TestCase):
+    UPLOAD = (
+        '-A POSTROUTING -s 192.168.1.50/32 -m comment --comment "evilair:upload" '
+        "-j MARK --set-xmark 0x1/0xffffffff"
+    )
+    DROP = (
+        '-A FORWARD -d 192.168.1.50/32 -m comment --comment "evilair:block:download" '
+        "-j DROP"
+    )
+
+    def test_matches_rules_with_prefix_length(self):
+        self.assertTrue(rule_matches(self.UPLOAD, ["-s", "192.168.1.50"], "MARK", "POSTROUTING"))
+        self.assertTrue(rule_matches(self.UPLOAD, ["-s", "192.168.1.50/32"], "MARK"))
+        self.assertFalse(rule_matches(self.UPLOAD, ["-s", "192.168.1.51"], "MARK"))
+        self.assertFalse(rule_matches(self.UPLOAD, ["-d", "192.168.1.50"], "MARK"))
+        self.assertFalse(rule_matches(self.UPLOAD, ["-s", "192.168.1.50"], "MARK", "PREROUTING"))
+
+    def test_ignores_rules_without_our_comment(self):
+        foreign = "-A POSTROUTING -s 10.0.0.1/32 -j MASQUERADE"
+        self.assertFalse(rule_matches(foreign, ["-s", "10.0.0.1"], None))
+        self.assertFalse(rule_matches(foreign, [], None, "POSTROUTING"))
+
+    def test_delete_arguments_unquote_comment(self):
+        argv = delete_arguments(self.UPLOAD)
+        self.assertEqual(argv[0], "-D")
+        self.assertIn("evilair:upload", argv)
+        self.assertFalse(any('"evilair' in part for part in argv))
+
+
+class IptablesCleanupTests(unittest.TestCase):
+    def test_clear_removes_mark_rules_for_host(self):
+        runner = _FakeIptables()
+        controller = TrafficController(runner, "eth0")
+        host = Host(ip="192.168.1.50", mac="aa:bb:cc:dd:ee:ff")
+        controller.limit(host, Direction.BOTH, BitRate.parse("1mbit"))
+        self.assertEqual(len(runner.rules.get(("mangle", "POSTROUTING"), [])), 1)
+        self.assertEqual(len(runner.rules.get(("mangle", "PREROUTING"), [])), 1)
+
+        controller.clear(host.ip)
+        self.assertEqual(runner.rules.get(("mangle", "POSTROUTING")), [])
+        self.assertEqual(runner.rules.get(("mangle", "PREROUTING")), [])
+
+        deleted = [cmd for cmd in runner.commands if cmd[:4] == ["iptables", "-t", "mangle", "-D"]]
+        self.assertEqual(len(deleted), 2)
+        self.assertTrue(any("evilair:upload" in cmd for cmd in deleted))
+        self.assertTrue(any("evilair:download" in cmd for cmd in deleted))
+        self.assertFalse(any(any('"evilair' in part for part in cmd) for cmd in deleted))
+
+    def test_clear_after_block_removes_drop_rule(self):
+        runner = _FakeIptables()
+        controller = TrafficController(runner, "eth0")
+        host = Host(ip="192.168.1.60", mac="aa:bb:cc:dd:ee:05")
+        controller.block(host, Direction.UPLOAD)
+        self.assertEqual(len(runner.rules.get(("filter", "FORWARD"), [])), 1)
+
+        controller.clear(host.ip)
+        self.assertEqual(runner.rules.get(("filter", "FORWARD")), [])
+        deleted = [cmd for cmd in runner.commands if cmd[:4] == ["iptables", "-t", "filter", "-D"]]
+        self.assertEqual(len(deleted), 1)
+        self.assertIn("evilair:block:upload", deleted[0])
+
+    def test_flush_deletes_all_tagged_rules(self):
+        runner = _FakeIptables()
+        controller = TrafficController(runner, "eth0")
+        controller.limit(Host(ip="192.168.1.70", mac="aa:bb:cc:dd:ee:06"), Direction.BOTH, BitRate.parse("1mbit"))
+        controller.block(Host(ip="192.168.1.71", mac="aa:bb:cc:dd:ee:07"), Direction.BOTH)
+
+        controller.flush()
+        self.assertEqual({key: value for key, value in runner.rules.items() if value}, {})
 
 
 if __name__ == "__main__":
