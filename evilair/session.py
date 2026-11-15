@@ -54,6 +54,7 @@ class Session:
     hosts: list[Host] = field(default_factory=list)
     started_at: float = field(default_factory=time.time)
     _running: bool = False
+    _protected: set[str] = field(init=False, repr=False)
 
     def __post_init__(self) -> None:
         self.runner = CommandRunner(dry_run=self.config.dry_run)
@@ -72,6 +73,16 @@ class Session:
             self._on_reconnect,
             interval=self.config.watch_interval,
         )
+
+        # Never shape or spoof the gateway or our own address during bulk
+        # operations; doing so would cut the connection for everyone.
+        self._protected = {self.config.gateway_ip}
+        try:
+            iface = resolve_interface(self.config.interface)
+        except Exception:  # pragma: no cover - platform dependent
+            iface = None
+        if iface is not None:
+            self._protected.add(str(iface.address))
 
     # -- helpers ----------------------------------------------------------
     def _addresses(self) -> list[str]:
@@ -303,6 +314,25 @@ class Session:
         unique: dict[str, Host] = {host.ip: host for host in selected}
         return list(unique.values())
 
+    def bulk_targets(self, reference: str) -> list[Host]:
+        """Resolve a target for a bulk action, protecting the gateway.
+
+        ``all`` intentionally skips the gateway and this machine's own address:
+        shaping or spoofing either of them would break the uplink. An explicit
+        id, IP or MAC still targets them when the user really means it.
+        """
+        hosts = self.select(reference)
+        if reference.strip().lower() != "all":
+            return hosts
+
+        skipped = sorted({host.ip for host in hosts if host.ip in self._protected})
+        if skipped:
+            self.console.warn("skipping gateway/local address: " + ", ".join(skipped))
+        hosts = [host for host in hosts if host.ip not in self._protected]
+        if not hosts:
+            raise SessionError("nothing to control after skipping the gateway")
+        return hosts
+
     # -- control ----------------------------------------------------------
     def limit(
         self,
@@ -319,7 +349,7 @@ class Session:
             raise SessionError("limit must be at least 1kbit")
 
         parsed_download = BitRate.parse(download_rate) if download_rate is not None else None
-        hosts = self.select(reference)
+        hosts = self.bulk_targets(reference)
         for host in hosts:
             self._arm(host)
             self.controller.limit(host, direction, bitrate, parsed_download)
@@ -327,7 +357,7 @@ class Session:
         return hosts
 
     def block(self, reference: str, direction: Direction) -> list[Host]:
-        hosts = self.select(reference)
+        hosts = self.bulk_targets(reference)
         for host in hosts:
             self._arm(host)
             self.controller.block(host, direction)

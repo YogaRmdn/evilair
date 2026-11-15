@@ -86,6 +86,35 @@ class SessionSelectionTests(unittest.TestCase):
             self.assertEqual(len(payload["hosts"]), 3)
             self.assertEqual(payload["hosts"][0]["ip"], "192.168.1.10")
 
+    def _with_gateway(self):
+        gateway = Host(ip="192.168.1.1", mac="00:11:22:33:44:55")
+        self.session.hosts.insert(0, gateway)
+        return gateway
+
+    def test_bulk_block_skips_gateway(self):
+        gateway = self._with_gateway()
+        blocked = self.session.block("all", Direction.BOTH)
+        self.assertNotIn(gateway, blocked)
+        self.assertFalse(gateway.managed)
+        self.assertTrue(all(host.blocked for host in blocked))
+
+    def test_bulk_limit_skips_gateway(self):
+        gateway = self._with_gateway()
+        limited = self.session.limit("all", "1mbit", Direction.BOTH)
+        self.assertNotIn(gateway, limited)
+        self.assertFalse(gateway.limited)
+
+    def test_gateway_can_still_be_targeted_explicitly(self):
+        gateway = self._with_gateway()
+        self.session.block("192.168.1.1", Direction.BOTH)
+        self.assertTrue(gateway.blocked)
+
+    def test_free_all_includes_gateway(self):
+        gateway = self._with_gateway()
+        self.session.block("192.168.1.1", Direction.BOTH)
+        self.session.free("all")
+        self.assertFalse(gateway.managed)
+
 
 class HostModelTests(unittest.TestCase):
     def test_status_and_hashing(self):

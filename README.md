@@ -83,7 +83,9 @@ sudo ./run.py
 | `add <ip> [--mac] [--name]` | Add a host manually | `add 192.168.1.10 --name laptop` |
 | `limit <target> <rate>` | Cap bandwidth | `limit 0 512kbit` |
 | `block <target>` | Cut internet access | `block 4` |
+| `block-all [--scan]` | Block every discovered host (gateway skipped) | `block-all --scan` |
 | `free <target>` | Remove limits/blocks | `free all` |
+| `free-all` | Remove limits/blocks from every host | `free-all` |
 | `monitor [--interval ms]` | Live bandwidth view | `monitor --interval 500` |
 | `analyze [target] [--duration s]` | Measure top consumers | `analyze all --duration 10` |
 | `watch add\|remove\|...` | Detect reconnections | `watch add 0` |
@@ -94,6 +96,8 @@ sudo ./run.py
 | `help`, `clear`, `quit` | Utilities | `help` |
 
 Targets accept host ids (`0`), ranges (`1-3`), comma lists, IPs, MACs, or `all`.
+Bulk targets (`all`, `block-all`, `limit all`) automatically skip the gateway and
+this machine's own address; target them explicitly by IP if you really mean it.
 
 ## Example session
 

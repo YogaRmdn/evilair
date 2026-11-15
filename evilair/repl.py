@@ -111,9 +111,25 @@ class Repl:
         parser.add_argument("--dir", choices=["up", "down", "both"], default="both")
         self._set_handler("block", self._cmd_block)
 
+        parser = self._add(
+            "block-all",
+            "Cut internet access for every discovered host (gateway skipped).",
+            ("blockall", "block_all"),
+        )
+        parser.add_argument("--scan", action="store_true", help="scan the LAN first")
+        parser.add_argument("--dir", choices=["up", "down", "both"], default="both")
+        self._set_handler("block-all", self._cmd_block_all)
+
         parser = self._add("free", "Remove every limit/block from hosts.", ("unlimit", "release"))
         parser.add_argument("target", nargs="?", default="all")
         self._set_handler("free", self._cmd_free)
+
+        parser = self._add(
+            "free-all",
+            "Remove every limit/block from all known hosts.",
+            ("freeall", "free_all"),
+        )
+        self._set_handler("free-all", self._cmd_free_all)
 
         parser = self._add("monitor", "Live bandwidth view.", ("mon", "top"))
         parser.add_argument("--interval", type=int, default=1000, help="refresh interval in ms")
@@ -214,7 +230,7 @@ class Repl:
     def _completion_words(self) -> list[str]:
         words = list(self.commands.keys())
         words += ["all", "up", "down", "both", "--dir", "--download", "--duration",
-                  "--interval", "--csv", "--no-names", "--probe"]
+                  "--interval", "--csv", "--no-names", "--probe", "--scan"]
         words += [host.ip for host in self.session.hosts]
         words += [host.mac.lower() for host in self.session.hosts]
         return sorted(set(words))
@@ -347,10 +363,25 @@ class Repl:
         for host in hosts:
             self.console.ok(f"{host.ip} blocked ({Direction.parse(args.dir).label()})")
 
+    def _cmd_block_all(self, args: argparse.Namespace) -> None:
+        if args.scan or not self.session.hosts:
+            self.console.info("scanning the LAN first…")
+            self.session.scan()
+        if not self.session.hosts:
+            raise SessionError("no hosts detected; run 'scan' or 'import --probe' first")
+        hosts = self.session.block("all", Direction.parse(args.dir))
+        self.console.ok(f"{len(hosts)} host(s) blocked")
+
     def _cmd_free(self, args: argparse.Namespace) -> None:
         hosts = self.session.free(args.target)
         for host in hosts:
             self.console.ok(f"{host.ip} is free again")
+
+    def _cmd_free_all(self, args: argparse.Namespace) -> None:
+        if not self.session.hosts:
+            raise SessionError("no hosts discovered yet, run 'scan' first")
+        hosts = self.session.free("all")
+        self.console.ok(f"{len(hosts)} host(s) freed")
 
     def _cmd_monitor(self, args: argparse.Namespace) -> None:
         hosts = self.session.hosts
