@@ -120,13 +120,17 @@ class Repl:
         parser.add_argument("--dir", choices=["up", "down", "both"], default="both")
         self._set_handler("block-all", self._cmd_block_all)
 
-        parser = self._add("free", "Remove every limit/block from hosts.", ("unlimit", "release"))
+        parser = self._add(
+            "free",
+            "Remove every limit/block from hosts ('all' skips the gateway).",
+            ("unlimit", "release"),
+        )
         parser.add_argument("target", nargs="?", default="all")
         self._set_handler("free", self._cmd_free)
 
         parser = self._add(
             "free-all",
-            "Remove every limit/block from all known hosts.",
+            "Remove every limit/block from all known hosts (gateway skipped).",
             ("freeall", "free_all"),
         )
         self._set_handler("free-all", self._cmd_free_all)

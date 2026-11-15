@@ -317,9 +317,10 @@ class Session:
     def bulk_targets(self, reference: str) -> list[Host]:
         """Resolve a target for a bulk action, protecting the gateway.
 
-        ``all`` intentionally skips the gateway and this machine's own address:
-        shaping or spoofing either of them would break the uplink. An explicit
-        id, IP or MAC still targets them when the user really means it.
+        ``all`` intentionally skips the gateway and this machine's own address
+        for every bulk action (limit, block and free): shaping, spoofing or
+        clearing either of them is never part of a structured bulk operation.
+        An explicit id, IP or MAC still targets them when the user means it.
         """
         hosts = self.select(reference)
         if reference.strip().lower() != "all":
@@ -374,7 +375,7 @@ class Session:
         self.spoofer.add(host)
 
     def free(self, reference: str) -> list[Host]:
-        hosts = self.select(reference)
+        hosts = self.bulk_targets(reference)
         for host in hosts:
             self.controller.clear(host.ip)
             if host.spoofed:

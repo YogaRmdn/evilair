@@ -109,10 +109,18 @@ class SessionSelectionTests(unittest.TestCase):
         self.session.block("192.168.1.1", Direction.BOTH)
         self.assertTrue(gateway.blocked)
 
-    def test_free_all_includes_gateway(self):
+    def test_free_all_skips_gateway(self):
         gateway = self._with_gateway()
         self.session.block("192.168.1.1", Direction.BOTH)
-        self.session.free("all")
+        freed = self.session.free("all")
+        self.assertNotIn(gateway, freed)
+        self.assertTrue(gateway.blocked)
+
+    def test_gateway_can_be_freed_explicitly(self):
+        gateway = self._with_gateway()
+        self.session.block("192.168.1.1", Direction.BOTH)
+        freed = self.session.free("192.168.1.1")
+        self.assertIn(gateway, freed)
         self.assertFalse(gateway.managed)
 
 
